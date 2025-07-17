@@ -53,10 +53,10 @@ public class AsyncServiceImpl implements AsyncService {
   private final Util util;
   private final Vertx vertx;
   private final MeteringService meteringService;
+  private final String filePath;
+  private final String tenantPrefix;
   public CacheService cacheService;
   private ResponseBuilder responseBuilder;
-  private String filePath;
-  private String tenantPrefix;
 
   public AsyncServiceImpl(
       Vertx vertx,
@@ -80,10 +80,9 @@ public class AsyncServiceImpl implements AsyncService {
   @Override
   public AsyncService asyncStatus(
       String sub, String searchId, Handler<AsyncResult<JsonObject>> handler) {
-    StringBuilder query = new StringBuilder(SELECT_S3_STATUS_SQL.replace("$1", searchId));
 
     pgService.executeQuery(
-        query.toString(),
+        SELECT_S3_STATUS_SQL.replace("$1", searchId),
         pgHandler -> {
           if (pgHandler.succeeded()) {
             JsonArray results = pgHandler.result().getJsonArray("result");
@@ -156,7 +155,7 @@ public class AsyncServiceImpl implements AsyncService {
                       })
                   .onFailure(
                       statusHandler -> {
-                        LOGGER.error("");
+                        LOGGER.error(statusHandler.getMessage());
                       });
             });
 
@@ -165,11 +164,8 @@ public class AsyncServiceImpl implements AsyncService {
 
   private Future<Void> updateQueryExecutionStatus(String searchId, QueryProgress status) {
     Promise<Void> promise = Promise.promise();
-    StringBuilder querySb =
-        new StringBuilder(
-            UPDATE_STATUS_SQL.replace("$1", status.toString()).replace("$2", searchId));
     pgService.executeQuery(
-        querySb.toString(),
+        UPDATE_STATUS_SQL.replace("$1", status.toString()).replace("$2", searchId),
         handler -> {
           if (handler.succeeded()) {
             LOGGER.debug("status : {} update for search id : {}", status.toString(), searchId);
@@ -191,14 +187,13 @@ public class AsyncServiceImpl implements AsyncService {
   Future<JsonArray> getRecord4RequestId(String requestId) {
     Promise<JsonArray> promise = Promise.promise();
 
-    StringBuilder query =
-        new StringBuilder(
-            SELECT_S3_SEARCH_SQL
-                .replace("$1", requestId)
-                .replace("$2", QueryProgress.COMPLETE.toString()));
+    String query =
+        SELECT_S3_SEARCH_SQL
+            .replace("$1", requestId)
+            .replace("$2", QueryProgress.COMPLETE.toString());
 
     pgService.executeQuery(
-        query.toString(),
+        query,
         pgHandler -> {
           if (pgHandler.succeeded()) {
             JsonArray results = pgHandler.result().getJsonArray("result");
@@ -245,18 +240,17 @@ public class AsyncServiceImpl implements AsyncService {
     long urlExpiry = ZonedDateTime.now().toEpochSecond() * 1000 + TimeUnit.DAYS.toMillis(1);
     URL s3Url = s3FileOpsHelper.generatePreSignedUrl(urlExpiry, objectId);
 
-    StringBuilder queryStringBuilder =
-        new StringBuilder(
-            UPDATE_S3_URL_SQL
-                .replace("$1", s3Url.toString())
-                .replace("$2", expiry)
-                .replace("$3", QueryProgress.COMPLETE.toString())
-                .replace("$4", objectId)
-                .replace("$5", String.valueOf(100.0d))
-                .replace("$6", String.valueOf(fileSize))
-                .replace("$7", searchId));
+    String queryStringBuilder =
+        UPDATE_S3_URL_SQL
+            .replace("$1", s3Url.toString())
+            .replace("$2", expiry)
+            .replace("$3", QueryProgress.COMPLETE.toString())
+            .replace("$4", objectId)
+            .replace("$5", String.valueOf(100.0d))
+            .replace("$6", String.valueOf(fileSize))
+            .replace("$7", searchId);
 
-    executePgQuery(queryStringBuilder.toString())
+    executePgQuery(queryStringBuilder)
         .onSuccess(
             handler -> {
               LOGGER.info("Query completed with existing requestId & objectId");
@@ -264,7 +258,9 @@ public class AsyncServiceImpl implements AsyncService {
             })
         .onFailure(
             handler -> {
-              LOGGER.error("Query execution failed for insert with existing requestId & objectId");
+              LOGGER.error(
+                  "Query execution failed for insert with existing requestId & objectId "
+                      + handler.getMessage());
             });
   }
 
@@ -304,18 +300,17 @@ public class AsyncServiceImpl implements AsyncService {
                     Long fileSize = file.length();
                     // update DB for search ID and requestId;
                     progressListener.finish();
-                    StringBuilder updateQuery =
-                        new StringBuilder(
-                            UPDATE_S3_URL_SQL
-                                .replace("$1", s3Url)
-                                .replace("$2", expiry)
-                                .replace("$3", QueryProgress.COMPLETE.toString())
-                                .replace("$4", objectId)
-                                .replace("$5", String.valueOf(100.0))
-                                .replace("$6", String.valueOf(fileSize))
-                                .replace("$7", searchId));
+                    String updateQuery =
+                        UPDATE_S3_URL_SQL
+                            .replace("$1", s3Url)
+                            .replace("$2", expiry)
+                            .replace("$3", QueryProgress.COMPLETE.toString())
+                            .replace("$4", objectId)
+                            .replace("$5", String.valueOf(100.0))
+                            .replace("$6", String.valueOf(fileSize))
+                            .replace("$7", searchId);
 
-                    executePgQuery(updateQuery.toString())
+                    executePgQuery(updateQuery)
                         .onSuccess(
                             recordUpdateHandler -> {
                               LOGGER.debug("updated status in postgres");
@@ -338,7 +333,9 @@ public class AsyncServiceImpl implements AsyncService {
                             });
 
                   } else {
-                    LOGGER.error("File upload to S3 failed for fileName : {}", file.getName());
+                    LOGGER.error(
+                        "File upload to S3 failed for fileName : {}",
+                        file.getName() + "cause :" + s3UploadHandler.cause().getMessage());
                     StringBuilder updateFailQuery =
                         new StringBuilder(
                             UPDATE_STATUS_SQL
@@ -348,7 +345,11 @@ public class AsyncServiceImpl implements AsyncService {
                   }
                 });
           } else {
-            LOGGER.error("Scroll API operation failed for searchId : " + searchId);
+            LOGGER.error(
+                "Scroll API operation failed for searchId : "
+                    + searchId
+                    + "cause: "
+                    + scrollHandler.cause());
             StringBuilder updateFailQuery =
                 new StringBuilder(
                     UPDATE_STATUS_SQL
